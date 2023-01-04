@@ -8,7 +8,7 @@ from os import system
 parser = argparse.ArgumentParser("irancellLTEMonitor", description="This program runs in background and monitor for LTE signal changes, you can set threshold for modem reboot.")
 parser.add_argument("--db", default="database.db", type=str)
 parser.add_argument("--user", default="admin", type=str)
-parser.add_argument("--pass", default="admin", type=str)
+parser.add_argument("--password", default="admin", type=str)
 parser.add_argument("--panel", default="192.168.1.1", type=str)
 parser.add_argument("--threshold", default=3, type=str, choices=[2,3,4])
 parser.add_argument("--run-after-reboot", default='', type=str)
@@ -18,7 +18,7 @@ dbcon = sqlite3.connect(args.db)
 if not dbcon:
     print('ERROR: DB connection error')
     exit(-1)
-r = dbcon.execute("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")
+r = dbcon.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
 tables = [i[0] for i in r.fetchall()]
 if 'log' not in tables:
     dbcon.execute('CREATE TABLE "log" (\
@@ -55,7 +55,7 @@ if 'lte_status' not in tables:
 dbcon.commit()
 
 user = args.user
-password = args['pass']
+password = args.password
 
 def log(message:str):
     global dbcon
