@@ -7,11 +7,11 @@ from os import system
 
 parser = argparse.ArgumentParser("irancellLTEMonitor", description="This program runs in background and monitor for LTE signal changes, you can set threshold for modem reboot.")
 parser.add_argument("--db", default="database.db", type=str)
-parser.add_argument("--user", default="admin", type=str)
-parser.add_argument("--password", default="admin", type=str)
+parser.add_argument("--user", '-u', default="admin", type=str)
+parser.add_argument("--password", '-p', default="admin", type=str)
 parser.add_argument("--panel", default="192.168.1.1", type=str)
-parser.add_argument("--threshold", default=3, type=str, choices=[2,3,4])
-parser.add_argument("--run-after-reboot", default='', type=str)
+parser.add_argument("--threshold", '-t', default=3, type=str, choices=[0,2,3,4], help="Threshold for modem reboot(2,3,4). * Use 0 to disable modem reboot")
+parser.add_argument("--run-after-reboot", '-e', default='', type=str, help="Execute a command after modem reboot.")
 args = parser.parse_args()
 
 dbcon = sqlite3.connect(args.db)
@@ -83,6 +83,7 @@ def lteSignal(rsrp):
 
 def login():
     global session, token, args
+
     r = session.get(f"http://{args.panel}/cgi-bin/auth.cgi?func=login&user={user}&pass={md5(password.encode('utf8')).hexdigest()}")
     if not r.ok:
         log('ERROR: ' + r.text)
@@ -95,12 +96,14 @@ def login():
     session.cookies.set("auth_token", token)
 
 def reboot():
-    global session, token, args
+    global session, args
 
     if check_response(session.get(f"http://{args.panel}/cgi-bin/system.cgi?func=reboot&token={token}").json()):
-        log("Waiting for 30 seconds to reboot ... ")
-        sleep(30)
-        
+        log("Waiting for 40 seconds to reboot ... ")
+        sleep(40)
+        session.close()
+        session = requests.Session()
+        login()
     else:
         log('ERROR: rebooting error')
         exit(-1)
@@ -115,7 +118,7 @@ while True:
         exit(-1)
     jres = r.json()
     if not check_response(jres):
-        log('ERROR: cannot login')
+        log('ERROR: error retrieving lte_status')
         exit(-1)
     dbcon.execute('INSERT INTO `lte_status`(uicc, dl_speed, ul_speed, cell_id, ecgi, rssi, rsrp, rsrq, sinr, band, earfcn, bandwidth, \
         txpower, service_cell_state, connection, internet, pdn_type, lte0pdn0_rxbytes, lte0pdn0_txbytes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', 
