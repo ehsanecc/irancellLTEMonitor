@@ -10,7 +10,7 @@ parser.add_argument("--db", default="database.db", type=str)
 parser.add_argument("--user", '-u', default="admin", type=str)
 parser.add_argument("--password", '-p', default="admin", type=str)
 parser.add_argument("--panel", default="192.168.1.1", type=str)
-parser.add_argument("--threshold", '-t', default=3, type=str, choices=[0,2,3,4], help="Threshold for modem reboot(2,3,4). * Use 0 to disable modem reboot")
+parser.add_argument("--threshold", '-t', default=3, type=int, choices=[0,2,3,4], help="Threshold for modem reboot(2,3,4). * Use 0 to disable modem reboot")
 parser.add_argument("--run-after-reboot", '-e', default='', type=str, help="Execute a command after modem reboot.")
 args = parser.parse_args()
 
@@ -119,7 +119,12 @@ while True:
     jres = r.json()
     if not check_response(jres):
         log('ERROR: error retrieving lte_status')
-        exit(-1)
+        if jres['result'] == '-5': # we need to relogin
+            log('relogin')
+            login()
+            continue
+        else:
+            exit(-1)
     dbcon.execute('INSERT INTO `lte_status`(uicc, dl_speed, ul_speed, cell_id, ecgi, rssi, rsrp, rsrq, sinr, band, earfcn, bandwidth, \
         txpower, service_cell_state, connection, internet, pdn_type, lte0pdn0_rxbytes, lte0pdn0_txbytes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', 
         (jres['uicc'], jres['dl_speed'], jres['ul_speed'], jres['cell_id'], jres['ecgi'], jres['rssi'], jres['rsrp'], jres['rsrq'], jres['sinr'], 
