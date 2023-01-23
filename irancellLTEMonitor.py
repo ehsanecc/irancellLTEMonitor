@@ -1,9 +1,12 @@
+#!/bin/python3
+
 import requests
 from hashlib import md5
 import sqlite3
 from time import sleep
 import argparse
 from os import system
+from time import strftime
 
 parser = argparse.ArgumentParser("irancellLTEMonitor", description="This program runs in background and monitor for LTE signal changes, you can set threshold for modem reboot.")
 parser.add_argument("--db", default="database.db", type=str)
@@ -12,6 +15,8 @@ parser.add_argument("--password", '-p', default="admin", type=str)
 parser.add_argument("--panel", default="192.168.1.1", type=str)
 parser.add_argument("--threshold", '-t', default=3, type=int, choices=[0,2,3,4], help="Threshold for modem reboot(2,3,4). * Use 0 to disable modem reboot")
 parser.add_argument("--run-after-reboot", '-e', default='', type=str, help="Execute a command after modem reboot.")
+parser.add_argument("--timewait", default=60, type=int, help="Reboot time wait")
+parser.add_argument("--loopdelay", default=60, type=int, help="Loop delay to check for signal")
 args = parser.parse_args()
 
 dbcon = sqlite3.connect(args.db)
@@ -60,7 +65,7 @@ password = args.password
 def log(message:str):
     global dbcon
 
-    print(message, flush=True)
+    print('\r[%s] %s' % (strftime('%Y-%m-%d %H:%M:%S'), message), flush=True)
     dbcon.execute("INSERT INTO `log`(message) VALUES (?)", (message,))
     dbcon.commit()
 
@@ -84,6 +89,7 @@ def lteSignal(rsrp):
 def login():
     global session, token, args
 
+    log(f'logging in with {args.user}:{"*"*len(args.password)}')
     r = session.get(f"http://{args.panel}/cgi-bin/auth.cgi?func=login&user={user}&pass={md5(password.encode('utf8')).hexdigest()}")
     if not r.ok:
         log('ERROR: ' + r.text)
@@ -94,13 +100,15 @@ def login():
         exit(-1)
     token = jres['token']
     session.cookies.set("auth_token", token)
+    log(f'token={token}')
 
 def reboot():
     global session, args
 
+    log(f'calling reboot')
     if check_response(session.get(f"http://{args.panel}/cgi-bin/system.cgi?func=reboot&token={token}").json()):
-        log("Waiting for 40 seconds to reboot ... ")
-        sleep(40)
+        log(f"Waiting for {args.timewait} seconds to reboot ... ")
+        sleep(float(args.timewait))
         session.close()
         session = requests.Session()
         login()
@@ -110,7 +118,7 @@ def reboot():
 
 session = requests.Session()
 login()
-log("Logger is running ... ")
+log("logger is running ... ")
 while True:
     r = session.get(f"http://{args.panel}/cgi-bin/lte.cgi?func=lte_status&token={token}")
     if not r.ok:
@@ -125,6 +133,7 @@ while True:
             continue
         else:
             exit(-1)
+    print(f'\rcurrent signal level is {jres["rsrp"]} ({lteSignal(int(jres["rsrp"]))}) {jres["ecgi"]}     ', end='')
     dbcon.execute('INSERT INTO `lte_status`(uicc, dl_speed, ul_speed, cell_id, ecgi, rssi, rsrp, rsrq, sinr, band, earfcn, bandwidth, \
         txpower, service_cell_state, connection, internet, pdn_type, lte0pdn0_rxbytes, lte0pdn0_txbytes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', 
         (jres['uicc'], jres['dl_speed'], jres['ul_speed'], jres['cell_id'], jres['ecgi'], jres['rssi'], jres['rsrp'], jres['rsrq'], jres['sinr'], 
@@ -132,8 +141,10 @@ while True:
         jres['pdn_type'], jres['lte0pdn0_rxbytes'], jres['lte0pdn0_txbytes']))
     dbcon.commit()
     if lteSignal(int(jres['rsrp'])) < args.threshold: # we reboot
-        log(f"signal level is too low {lteSignal(int(jres['rsrp']))}, so we rebooting modem ... ")
+        log(f"signal level is too low {lteSignal(int(jres['rsrp']))}, so we rebooting modem")
         reboot()
         if len(args.run_after_reboot):
-            system(args.run_after_reboot)
-    sleep(30)
+            log(f'executing command: {args.run_after_reboot}')
+            log('result: %d' % (system(args.run_after_reboot),))
+    
+    sleep(args.loopdelay)
