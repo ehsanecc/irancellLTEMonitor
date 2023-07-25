@@ -7,6 +7,8 @@ from time import sleep
 import argparse
 from os import system
 from time import strftime
+import platform, re
+from subprocess import check_output
 
 parser = argparse.ArgumentParser("irancellLTEMonitor", description="This program runs in background and monitor for LTE signal changes, you can set threshold for modem reboot.")
 parser.add_argument("--db", default="database.db", type=str)
@@ -14,6 +16,7 @@ parser.add_argument("--user", '-u', default="admin", type=str)
 parser.add_argument("--password", '-p', default="admin", type=str)
 parser.add_argument("--panel", default="192.168.1.1", type=str)
 parser.add_argument("--threshold", '-t', default=3, type=int, choices=[0,2,3,4], help="Threshold for modem reboot(2,3,4). * Use 0 to disable modem reboot")
+parser.add_argument("--ping-threshold", default=2000, type=int, help="Threshold for ping test. default=2000")
 parser.add_argument("--run-after-reboot", '-e', default='', type=str, help="Execute a command after modem reboot.")
 parser.add_argument("--timewait", default=60, type=int, help="Reboot time wait")
 parser.add_argument("--loopdelay", default=60, type=int, help="Loop delay to check for signal")
@@ -54,6 +57,7 @@ if 'lte_status' not in tables:
         "pdn_type"	TEXT,\
         "lte0pdn0_rxbytes"	INTEGER,\
         "lte0pdn0_txbytes"	INTEGER,\
+        "ping" INTEGER,\
         "time"	TEXT DEFAULT CURRENT_TIMESTAMP,\
         PRIMARY KEY("id" AUTOINCREMENT)\
     );')
@@ -61,6 +65,14 @@ dbcon.commit()
 
 user = args.user
 password = args.password
+
+def ping(host):
+    param = "-n" if platform.system().lower() == "windows" else "-c"
+    command = ["ping", param, "1", host]
+    outbuffer = check_output(command)
+    regex = r"Minimum = (\d+)" if platform.system().lower() == "windows" else r"rtt min\/avg\/max\/mdev = (\d+).* ms"
+    g = re.findall(regex, outbuffer.decode('utf8'), re.IGNORECASE|re.DOTALL)
+    return int(g[0]) if len(g) > 0 else -1
 
 def log(message:str):
     global dbcon
@@ -133,15 +145,19 @@ while True:
             continue
         else:
             exit(-1)
-    print(f'\rcurrent signal level is {jres["rsrp"]} ({lteSignal(int(jres["rsrp"]))}) {jres["ecgi"]}     ', end='')
+    ping_result = ping('google.com')
+    print(f'\rcurrent signal level is {jres["rsrp"]} ({lteSignal(int(jres["rsrp"]))}) {jres["ecgi"]} ping={ping_result}ms     ', end='')
     dbcon.execute('INSERT INTO `lte_status`(uicc, dl_speed, ul_speed, cell_id, ecgi, rssi, rsrp, rsrq, sinr, band, earfcn, bandwidth, \
-        txpower, service_cell_state, connection, internet, pdn_type, lte0pdn0_rxbytes, lte0pdn0_txbytes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', 
+        txpower, service_cell_state, connection, internet, pdn_type, lte0pdn0_rxbytes, lte0pdn0_txbytes, ping) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', 
         (jres['uicc'], jres['dl_speed'], jres['ul_speed'], jres['cell_id'], jres['ecgi'], jres['rssi'], jres['rsrp'], jres['rsrq'], jres['sinr'], 
         jres['band'], jres['earfcn'], jres['bandwidth'], jres['txpower'], jres['service_cell_state'], jres['connection'], jres['internet'], 
-        jres['pdn_type'], jres['lte0pdn0_rxbytes'], jres['lte0pdn0_txbytes']))
+        jres['pdn_type'], jres['lte0pdn0_rxbytes'], jres['lte0pdn0_txbytes'], ping_result))
     dbcon.commit()
-    if lteSignal(int(jres['rsrp'])) < args.threshold: # we reboot
-        log(f"signal level is too low {lteSignal(int(jres['rsrp']))}, so we rebooting modem")
+    if lteSignal(int(jres['rsrp'])) < args.threshold or (ping_result if ping_result > 0 else 99999) > args.ping_threshold: # we reboot
+        if lteSignal(int(jres['rsrp'])) < args.threshold:
+            log(f"signal level is too low {lteSignal(int(jres['rsrp']))}, so we rebooting modem")
+        else:
+            log(f"ping value is too high {ping_result}, so we rebooting modem")
         reboot()
         if len(args.run_after_reboot):
             log(f'executing command: {args.run_after_reboot}')
